@@ -35,6 +35,7 @@
             var buttonOffsetTopPixels = -25;
             var formOffsetLeftPixels = +10;
             var formOffsetTopPixels = +25;
+            var preload = false;
 
             var formTemplate =
                 '<div class="jopier-form" ng-show="renderForm">' +
@@ -63,6 +64,10 @@
                 }
             };
 
+            this.preload = function(trueOrFalse) {
+                preload = trueOrFalse;
+            };
+
             this.buttonOffsetLeftPixels = function (number) {
                 buttonOffsetLeftPixels = number;
             };
@@ -81,8 +86,20 @@
             // ==============
             // Jopier Service
             // ==============
-            function JopierService($q,$http) {
+            function JopierService($q, $http) {
                 var self = this; // Disable warning in ide on using this.
+
+                var cachedContent = {};
+
+                if (preload) {
+                    $http.get('/jopier').
+                        success(function (data, status, headers, config) {
+                            cachedContent = data;
+                        }).error(function (data, status, headers, config) {
+                            var err = new Error('Could not preload (' + status + '): ' + data);
+                            console.log(err);
+                        });
+                }
                 self.formTemplate = function () {
                     return formTemplate;
                 };
@@ -92,23 +109,49 @@
                 self.content = function (key, content) {
                     if (content) {
                         return $q(function serviceGetContentSuccess(resolve, reject) {
-                            $http.post('/jopier/' + key, {content:content}).
+                            $http.post('/jopier/' + key, {content: content}).
                                 success(function (data, status, headers, config) {
+                                    updateCache(key, content);
                                     resolve('Success');
-                            }).error(function (data, status, headers, config) {
+                                }).error(function (data, status, headers, config) {
+
                                     var err = new Error('Status ' + status + ': ' + data.message);
                                     reject(err);
-                            });
+                                });
                         });
                     } else {
                         return $q(function serviceGetContentError(resolve, reject) {
-                            $http.get('/jopier/' + key).
-                                success(function (data, status, headers, config) {
-                                resolve(data.content);
-                            }).error(function (data, status, headers, config) {
-                                var err = new Error('Status ' + status + ': ' + data.message);
-                                reject(err);
-                            });
+                            var resolvedContent;
+                            if (cachedContent){
+                                var pathToContent = key.split('.');
+                                resolvedContent = cachedContent;
+                                for (var i = 0; i < pathToContent.length; i++) {
+                                    // Point to the next level down.  Final iteration results in the contents
+                                    resolvedContent = resolvedContent[pathToContent[i]];
+                                    if (!resolvedContent) {
+                                        break;
+                                    }
+                                }
+                                if (resolvedContent && typeof resolvedContent === 'string') {
+                                    resolve(resolvedContent);
+                                } else {
+                                    resolvedContent = undefined;
+                                }
+                            }
+                            if (!resolvedContent) {
+                                $http.get('/jopier/' + key).
+                                    success(function (data, status, headers, config) {
+                                        updateCache (key, data.content);
+                                        resolve(data.content);
+                                    }).error(function (data, status, headers, config) {
+                                        if (status == 404 && typeof data === 'string' && data.indexOf('No content found for key') === 0) {
+                                            resolve('No content found for key ' + key + '. To add entry, replace this message with content and save');
+                                        } else {
+                                            var err = new Error('Status ' + status + ': ' + data.message);
+                                            reject(err);
+                                        }
+                                    });
+                            }
                         });
                     }
                 };
@@ -124,10 +167,27 @@
                 self.formOffsetTopPixels = function () {
                     return formOffsetTopPixels;
                 };
+
+                function updateCache (key, updatedContent) {
+                    if (cachedContent) {
+                        var pathToContent = key.split('.');
+                        var resolvedContent = cachedContent;
+                        for (var i = 0; i < pathToContent.length - 1; i++) {
+                            if (!resolvedContent[pathToContent[i]]) {
+                                var nextObject = {};
+                                nextObject[pathToContent[i+1]] = undefined;
+                                resolvedContent[pathToContent[i]] = nextObject;
+                            }
+                            // Point to the next level down.  Final iteration results in the contents
+                            resolvedContent = resolvedContent[pathToContent[i]];
+                        }
+                        resolvedContent[pathToContent[pathToContent.length-1]] = updatedContent;
+                    }
+                }
             }
 
 
-            this.$get = ['$q','$http', function ($q,$http) {
+            this.$get = ['$q', '$http', function ($q, $http) {
                 return new JopierService($q, $http);
             }];
         })
@@ -188,7 +248,7 @@
                             function (content) {
                                 scope.content = content;
                             },
-                            function(err) {
+                            function (err) {
                                 scope.content = 'Error getting content, check console log: ' + err.message;
                                 console.error(err);
                                 alert(scope.content);
@@ -261,7 +321,7 @@
                         scope.renderForm = false;
                     };
                     scope.save = function () {
-                        $jopier.content(scope.key, scope.content). then(
+                        $jopier.content(scope.key, scope.content).then(
                             function () {
                                 scope.attachTo.html(scope.content);
                                 scope.content = '';

@@ -1,0 +1,3 @@
+[submodule "client/components/jopier"]
+	path = client/components/jopier
+	url = https://github.com/FranzZemen/jopier

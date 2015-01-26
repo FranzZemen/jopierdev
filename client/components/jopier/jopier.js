@@ -29,23 +29,22 @@
         // ===============
         .provider('$jopier', function () {
 
-            var buttonTemplate = '<button class="jopier-button" ng-click="editContent()" ng-show="renderButton">Joppy It</button>';
-
-            var buttonOffsetLeftPixels = -10;
-            var buttonOffsetTopPixels = -25;
-            var formOffsetLeftPixels = +10;
-            var formOffsetTopPixels = +25;
-            var preload = false;
-
-            var formTemplate =
-                '<div class="jopier-form" ng-show="renderForm">' +
-                '<div class="jopier-form-container"><form name="jopierForm" novalidate>' +
-                '<div class="jopier-form-title"><span>Edit Content (this form is resizeable)</span></div>' +
-                '<div class="jopier-form-control"><label>Key</label>:</div><div class="jopier-form-control"><input type="text" name="key" ng-model="key" disabled/></div>' +
-                '<div class="jopier-form-control"><label>Content</label>:</div><div class="jopier-form-control"><textarea name="content" ng-model="content"/></div>' +
-                '<div class="jopier-form-control jopier-form-buttons"><input type="submit" value="Save" ng-click="save()">&nbsp;&nbsp;<input type="button" value="Cancel" ng-click="cancel()"></div>' +
-                '</form></div>' +
-                '</div>';
+            var buttonTemplate = '<button class="jopier-button" ng-click="editContent()" ng-show="renderButton">Joppy It</button>',
+                formTemplate =
+                    '<div class="jopier-form" ng-show="renderForm">' +
+                    '<div class="jopier-form-container"><form name="jopierForm" novalidate>' +
+                    '<div class="jopier-form-title"><span>Edit Content (this form is resizeable)</span></div>' +
+                    '<div class="jopier-form-control"><label>Key</label>:</div><div class="jopier-form-control"><input type="text" name="key" ng-model="key" disabled/></div>' +
+                    '<div class="jopier-form-control"><label>Content</label>:</div><div class="jopier-form-control"><textarea name="content" ng-model="content"/></div>' +
+                    '<div class="jopier-form-control jopier-form-buttons"><input type="submit" value="Save" ng-click="save()">&nbsp;&nbsp;<input type="button" value="Cancel" ng-click="cancel()"></div>' +
+                    '</form></div>' +
+                    '</div>',
+                buttonOffsetLeftPixels = -10,
+                buttonOffsetTopPixels = -25,
+                formOffsetLeftPixels = +10,
+                formOffsetTopPixels = +25,
+                preload = true,
+                restPath = '/jopier';
 
 
             this.formTemplate = function (template) {
@@ -64,8 +63,12 @@
                 }
             };
 
-            this.preload = function(trueOrFalse) {
+            this.preload = function (trueOrFalse) {
                 preload = trueOrFalse;
+            };
+
+            this.setRestPath = function (path) {
+                restPath = path;
             };
 
             this.buttonOffsetLeftPixels = function (number) {
@@ -90,9 +93,10 @@
                 var self = this; // Disable warning in ide on using this.
 
                 var cachedContent = {};
+                var authToken;
 
                 if (preload) {
-                    $http.get('/jopier').
+                    $http.get(restPath).
                         success(function (data, status, headers, config) {
                             cachedContent = data;
                         }).error(function (data, status, headers, config) {
@@ -106,12 +110,26 @@
                 self.buttonTemplate = function () {
                     return buttonTemplate;
                 };
+                self.authToken = function (token) {
+                    authToken = token;
+                };
+                self.synchronousContent = function (key) {
+                    var resolvedContent = cache(key);
+                    if (resolvedContent) {
+                        return resolvedContent;
+                    } else if (!preload) {
+                        return 'Cannot get content synchronously and preload set to false';
+                    } else {
+                        return key;
+                    }
+                };
                 self.content = function (key, content) {
                     if (content) {
                         return $q(function serviceGetContentSuccess(resolve, reject) {
-                            $http.post('/jopier/' + key, {content: content}).
+                            var uri = restPath + '/' + key + (authToken ? '?authToken=' + authToken : '');
+                            $http.post(uri, {content: content}).
                                 success(function (data, status, headers, config) {
-                                    updateCache(key, content);
+                                    cache(key, content);
                                     resolve('Success');
                                 }).error(function (data, status, headers, config) {
 
@@ -121,27 +139,15 @@
                         });
                     } else {
                         return $q(function serviceGetContentError(resolve, reject) {
-                            var resolvedContent;
-                            if (cachedContent){
-                                var pathToContent = key.split('.');
-                                resolvedContent = cachedContent;
-                                for (var i = 0; i < pathToContent.length; i++) {
-                                    // Point to the next level down.  Final iteration results in the contents
-                                    resolvedContent = resolvedContent[pathToContent[i]];
-                                    if (!resolvedContent) {
-                                        break;
-                                    }
-                                }
-                                if (resolvedContent && typeof resolvedContent === 'string') {
-                                    resolve(resolvedContent);
-                                } else {
-                                    resolvedContent = undefined;
-                                }
+                            var resolvedContent = cache(key);
+                            if (resolvedContent) {
+                                resolve(resolvedContent);
                             }
                             if (!resolvedContent) {
-                                $http.get('/jopier/' + key).
+                                var uri = restPath + '/' + key + (authToken ? '?authToken=' + authToken : '');
+                                $http.get(uri).
                                     success(function (data, status, headers, config) {
-                                        updateCache (key, data.content);
+                                        cache(key, data.content);
                                         resolve(data.content);
                                     }).error(function (data, status, headers, config) {
                                         if (status == 404 && typeof data === 'string' && data.indexOf('No content found for key') === 0) {
@@ -168,20 +174,36 @@
                     return formOffsetTopPixels;
                 };
 
-                function updateCache (key, updatedContent) {
-                    if (cachedContent) {
-                        var pathToContent = key.split('.');
+                function cache(key, updatedContent) {
+                    var pathToContent;
+                    if (updatedContent) {
+                        pathToContent = key.split('.');
                         var resolvedContent = cachedContent;
                         for (var i = 0; i < pathToContent.length - 1; i++) {
                             if (!resolvedContent[pathToContent[i]]) {
                                 var nextObject = {};
-                                nextObject[pathToContent[i+1]] = undefined;
+                                nextObject[pathToContent[i + 1]] = undefined;
                                 resolvedContent[pathToContent[i]] = nextObject;
                             }
                             // Point to the next level down.  Final iteration results in the contents
                             resolvedContent = resolvedContent[pathToContent[i]];
                         }
-                        resolvedContent[pathToContent[pathToContent.length-1]] = updatedContent;
+                        resolvedContent[pathToContent[pathToContent.length - 1]] = updatedContent;
+                    } else {
+                        pathToContent = key.split('.');
+                        resolvedContent = cachedContent;
+                        for (var i = 0; i < pathToContent.length; i++) {
+                            // Point to the next level down.  Final iteration results in the contents
+                            resolvedContent = resolvedContent[pathToContent[i]];
+                            if (!resolvedContent) {
+                                break;
+                            }
+                        }
+                        if (resolvedContent && typeof resolvedContent === 'string') {
+                            return resolvedContent;
+                        } else {
+                            return undefined;
+                        }
                     }
                 }
             }
@@ -194,7 +216,7 @@
         // ================
         // Jopier Directive
         // ================
-        .directive('jopier', ['$compile', '$translate', '$jopier', '$interpolate', function ($compile, $translate, $jopier, $interpolate) {
+        .directive('jopier', ['$compile', '$jopier', '$interpolate', function ($compile, $jopier, $interpolate) {
             return {
                 // TODO:  change copy of an attribute (img src or translate attribute)
                 // TODO:  change copy of an expression, not of the expression itself
@@ -216,12 +238,27 @@
                         console.log('matches');
                         scope.key = $interpolate(scope.key)(scope.$parent);
                     }
+                    if (!/^([a-z0-9]+\.)*[a-z0-9]+$/i.test(scope.key)) {
+                        scope.key = 'BAD_KEY';
+                    }
+
+                    // Now for the magic; set the contet...
+                    $jopier.content(scope.key).then(
+                        function (content) {
+                            element.html(content);
+                        },
+                        function (err) {
+                            console.log(err);
+                            element.html('Error loading content for key (see console logs): ' + key);
+                        }
+                    );
 
                     var deregisterHide = scope.$on('jopier-hide', function () {
                         element.removeClass('jopier-target');
                         scope.renderButton = false;
                         scope.renderForm = false;
                     });
+
                     var deregisterShow = scope.$on('jopier-show', function () {
                         createButton();
                         element.addClass('jopier-target');
@@ -336,5 +373,10 @@
                     }
                 }
             };
+        }])
+        .filter('jopier', ['$jopier', function ($jopier) {
+            return function (key) {
+                return $jopier.synchronousContent(key); // Of course no real synchronous ajax call is made, but will return an error if attempted.  Needs config to have preload=true.
+            }
         }]);
 })();

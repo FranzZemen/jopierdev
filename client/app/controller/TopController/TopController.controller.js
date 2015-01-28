@@ -10,7 +10,6 @@ angular.module('bshJopierApp')
                 $scope.$root.$broadcast('jopier-hide');
             } else {
                 $scope.$root.$broadcast('jopier-show');
-                $scope.val = Math.random() < .5 ? "SECOND": "FIRST";
             }
         };
   });

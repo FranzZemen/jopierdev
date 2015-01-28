@@ -67,7 +67,7 @@
             return postPath;
         };
         this.allPath = function () {
-            return basePath;
+            return allPath;
         };
 
         var logIdentifier = {mongoUri: mongoUri, collection: collection, siteKey: siteKey};
